@@ -1,4 +1,18 @@
-.vscode/
+# Ignore extension-less files.
+*
+!*.*
+!*/
+
+# Oops! Allow Makefile
+!Makefile
+
+# Ignore default binary name
 a.out
-out/
+
+# Ignore source ZIP file + PDF file
+# and output PDF file
+*.zip
 *.pdf
+
+# Ignore VS Code workspace configuration folder
+.vscode/
