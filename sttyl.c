@@ -14,30 +14,81 @@
 #include <unistd.h> // syscalls
 #include <termios.h> // terminal information
 
-const char* BAUD_LIST[] = {
-	"0", "50", "75", "110", "134", "150", "200", "300", "600",
-	"1200", "1800", "2400", "4800", "9600", "19200", "38400",
-	"57600", "115200", "230400", "460800", "500000", "576000",
-	"921600", "1000000", "1152000", "1500000", "2000000",
-};
+#define sizeofarr(arr) (sizeof(arr) / sizeof(*arr))
+
+char *get_baud_str(speed_t baud) {
+	switch (baud) {
+		case B0:     return "0";     case B50:    return "50";
+		case B75:    return "75";    case B110:   return "110";
+		case B134:   return "134";   case B150:   return "150";
+		case B200:   return "200";   case B300:   return "300";
+		case B600:   return "600";   case B1200:  return "1200";
+		case B1800:  return "1800";  case B2400:  return "2400";
+		case B4800:  return "4800";  case B9600:  return "9600";
+		case B19200: return "19200"; case B38400: return "38400";
+	}
+	return NULL;
+}
+
+void print_control_char(struct termios* term, char *msg, size_t index) {
+	if (index < NCCS) {
+		cc_t cc = term->c_cc[index];
+		if (cc == _POSIX_VDISABLE) {
+			printf("%s = <none>", msg);
+		} else {
+			// Make printable if alphabetical.
+			char printable_cc = cc < 26
+				? cc + 'A' - 1
+				: '?'; //cc & 077;
+			
+			printf("%s = ^%c", msg, printable_cc);
+			// printf(" (%d; %d)", cc, printable_cc);
+		}
+	} else {
+		fprintf(stderr, "unknown control char (%ld)", index);
+	}
+}
 
 int main(int argc, char *argv[]) {
-	/* if (argc <= 1) {
-		char *name = (argc > 0) ? argv[0] : "sttyl";
-		fprintf(stderr, "Usage: %s some thing\n", name);
-		exit(EXIT_FAILURE);
-	} */
-	
 	struct termios terminalInfo;
 	if (tcgetattr(STDIN_FILENO, &terminalInfo) == -1) {
-		perror("oops");
+		perror("couldn't get terminal info");
 		exit(EXIT_FAILURE);
 	}
 	
-	// the returned value of this is yeah. the freakin numbers from constants
-	// its an index into this..
+	// Show terminal baud speed.
+	
 	speed_t baud = cfgetospeed(&terminalInfo);
-	printf("speed %s baud\n", BAUD_LIST[baud]);
+	char *baud_str = get_baud_str(baud);
+	if (baud_str != NULL) {
+		printf("speed %s baud\n", baud_str);
+	} else {
+		fprintf(stderr, "unknown speed (%d)\n", baud);
+	}
+	
+	// Show control characters.
+	
+	struct {
+		size_t index;
+		char *name;
+	} listedCharacters[] = {
+		VINTR,  "intr",
+		VERASE, "erase",
+		VKILL,  "kill",
+		VSTART, "start",
+		VSTOP,  "stop",
+	};
+	
+	for (size_t i = 0; i < sizeofarr(listedCharacters); i++) {
+		if (i > 0) printf("; ");
+		
+		print_control_char(
+			&terminalInfo,
+			listedCharacters[i].name,
+			listedCharacters[i].index
+		);
+	}
+	printf("\n");
 	
 	return EXIT_SUCCESS;
 }
