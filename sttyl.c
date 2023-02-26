@@ -18,23 +18,23 @@
 
 char *get_baud_str(speed_t baud) {
 	switch (baud) {
-		case B0:     return "0";     case B50:    return "50";
-		case B75:    return "75";    case B110:   return "110";
-		case B134:   return "134";   case B150:   return "150";
-		case B200:   return "200";   case B300:   return "300";
-		case B600:   return "600";   case B1200:  return "1200";
-		case B1800:  return "1800";  case B2400:  return "2400";
-		case B4800:  return "4800";  case B9600:  return "9600";
-		case B19200: return "19200"; case B38400: return "38400";
+		case B0:     return "0";       case B50:    return "50";
+		case B75:    return "75";      case B110:   return "110";
+		case B134:   return "134";     case B150:   return "150";
+		case B200:   return "200";     case B300:   return "300";
+		case B600:   return "600";     case B1200:  return "1200";
+		case B1800:  return "1800";    case B2400:  return "2400";
+		case B4800:  return "4800";    case B9600:  return "9600";
+		case B19200: return "19200";   case B38400: return "38400";
+		default: return NULL;
 	}
-	return NULL;
 }
 
 void print_control_char(struct termios* term, char *msg, size_t index) {
 	if (index < NCCS) {
 		cc_t cc = term->c_cc[index];
 		if (cc == _POSIX_VDISABLE) {
-			printf("%s = <none>", msg);
+			printf("%s = <undef>", msg);
 		} else {
 			// Make printable if alphabetical.
 			char printable_cc = cc < 26
@@ -45,50 +45,65 @@ void print_control_char(struct termios* term, char *msg, size_t index) {
 			// printf(" (%d; %d)", cc, printable_cc);
 		}
 	} else {
-		fprintf(stderr, "unknown control char (%ld)", index);
+		printf("invalid (%ld)", index);
 	}
 }
 
-int main(int argc, char *argv[]) {
-	struct termios terminalInfo;
-	if (tcgetattr(STDIN_FILENO, &terminalInfo) == -1) {
-		perror("couldn't get terminal info");
-		exit(EXIT_FAILURE);
-	}
-	
+void print_terminal_info(struct termios* term) {
 	// Show terminal baud speed.
 	
-	speed_t baud = cfgetospeed(&terminalInfo);
+	speed_t baud = cfgetospeed(term);
 	char *baud_str = get_baud_str(baud);
 	if (baud_str != NULL) {
-		printf("speed %s baud\n", baud_str);
+		printf("speed %s baud", baud_str);
 	} else {
-		fprintf(stderr, "unknown speed (%d)\n", baud);
+		fprintf(stderr, "unknown speed (%d)", baud);
 	}
+	printf("\n");
 	
-	// Show control characters.
+	// Show current control character assignments.
 	
 	struct {
 		size_t index;
 		char *name;
 	} listedCharacters[] = {
-		VINTR,  "intr",
-		VERASE, "erase",
-		VKILL,  "kill",
-		VSTART, "start",
-		VSTOP,  "stop",
+		{ VINTR,  "intr"  },
+		{ VERASE, "erase" },
+		{ VKILL,  "kill"  },
+		{ VSTART, "start" },
+		{ VSTOP,  "stop"  },
 	};
 	
 	for (size_t i = 0; i < sizeofarr(listedCharacters); i++) {
 		if (i > 0) printf("; ");
 		
 		print_control_char(
-			&terminalInfo,
+			term,
 			listedCharacters[i].name,
 			listedCharacters[i].index
 		);
 	}
 	printf("\n");
+}
+
+int main(int argc, char *argv[]) {
+	struct termios term;
+	if (tcgetattr(STDIN_FILENO, &term) == -1) {
+		perror("couldn't get terminal info");
+		exit(EXIT_FAILURE);
+	}
+	
+	if (argc <= 1) {
+		print_terminal_info(&term);
+	} else {
+		// Pass the terminal info struct into
+		// several functions that mutate it...
+		
+		term.c_lflag ^= ECHO;
+		
+		// ...and write the resulting struct back into the terminal!
+		tcsetattr(STDIN_FILENO, TCSADRAIN, &term);
+	}
 	
 	return EXIT_SUCCESS;
 }
