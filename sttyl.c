@@ -14,7 +14,11 @@
 #include <unistd.h> // syscalls
 #include <termios.h> // terminal information
 
-#define sizeofarr(arr) (sizeof(arr) / sizeof(*arr))
+#define sizeofarr(arr) (sizeof(arr) / sizeof(*(arr)))
+#define arrandsize(arr) arr, sizeofarr(arr)
+
+// actually i don't like this macro
+#define setbit(i, mask, value) do { i = ((i) & ~(mask)) | ((mask) * (value)); } while (0)
 
 char *get_baud_str(speed_t baud) {
 	switch (baud) {
@@ -34,8 +38,7 @@ struct cc_info {
 	int index;
 	const char *name;
 };
-
-const struct cc_info LISTED_CONTROL_CHARS[] = {
+const struct cc_info LOOKUP_CONTROL_CHARS[] = {
 	{ VINTR,  "intr"  },
 	{ VERASE, "erase" },
 	{ VKILL,  "kill"  },
@@ -51,7 +54,6 @@ struct attr_info {
 	// even when it's disabled?
 	bool important;
 };
-
 const struct attr_info LOOKUP_IFLAGS[] = {
 	// Copy-Paste-Reformat from
 	// termios-c_iflag.h
@@ -97,7 +99,10 @@ const struct attr_info LOOKUP_LFLAGS[] = {
 	{ IEXTEN, "iexten" , false }  // Enable implementation-defined input processing.
 };
 
-void print_control_char(const struct termios* term, const struct cc_info* info) {
+void print_control_char(
+	const struct termios* term,
+	const struct cc_info* info
+) {
 	if (info->index < NCCS) {
 		cc_t cc = term->c_cc[info->index];
 		if (cc == _POSIX_VDISABLE) {
@@ -116,24 +121,46 @@ void print_control_char(const struct termios* term, const struct cc_info* info) 
 	}
 }
 
-void print_attribute_info(
+void print_attr_info(
 	const tcflag_t* bitset,
 	const struct attr_info lookup[],
 	size_t lookup_len,
 	bool all
 ) {
-	bool printedOne = false;
+	bool printed_one = false;
 	for (size_t i = 0; i < lookup_len; i++) {
 		const struct attr_info* info = &lookup[i];
 		bool enabled = (*bitset) & info->index;
-		bool shouldDisplay = enabled || all || info->important;
-		if (shouldDisplay) {
-			if (printedOne) putchar(' ');
+		bool should_display = enabled || all || info->important;
+		if (should_display) {
+			if (printed_one) putchar(' ');
 			if (!enabled) putchar('-');
 			printf("%s", info->name);
-			printedOne = true;
+			printed_one = true;
 		}
 	}
+}
+
+const struct attr_info* find_attr_by_name(
+	const char* name,
+	const struct attr_info lookup[],
+	size_t lookup_len
+) {
+	for (size_t i = 0; i < lookup_len; i++)
+		if (strcmp(name, lookup[i].name) == 0)
+			return &lookup[i];
+	return NULL;
+}
+
+const struct cc_info* find_cc_by_name(
+	const char* name,
+	const struct cc_info lookup[],
+	size_t lookup_len
+) {
+	for (size_t i = 0; i < lookup_len; i++)
+		if (strcmp(name, lookup[i].name) == 0)
+			return &lookup[i];
+	return NULL;
 }
 
 void print_terminal_info(const struct termios* term) {
@@ -150,21 +177,18 @@ void print_terminal_info(const struct termios* term) {
 	
 	// Show current control character assignments.
 	
-	for (size_t i = 0; i < sizeofarr(LISTED_CONTROL_CHARS); i++) {
+	for (size_t i = 0; i < sizeofarr(LOOKUP_CONTROL_CHARS); i++) {
 		if (i > 0) printf("; ");
-		print_control_char(term, &LISTED_CONTROL_CHARS[i]);
+		print_control_char(term, &LOOKUP_CONTROL_CHARS[i]);
 	}
 	printf("\n");
 	
 	// Show important flags
 	
 	bool all = false;
-	print_attribute_info(&(term->c_iflag), LOOKUP_IFLAGS, sizeofarr(LOOKUP_IFLAGS), all);
-	printf("\n");
-	print_attribute_info(&(term->c_oflag), LOOKUP_OFLAGS, sizeofarr(LOOKUP_OFLAGS), all);
-	printf("\n");
-	print_attribute_info(&(term->c_lflag), LOOKUP_LFLAGS, sizeofarr(LOOKUP_LFLAGS), all);
-	printf("\n");
+	print_attr_info(&(term->c_iflag), arrandsize(LOOKUP_IFLAGS), all); printf("\n");
+	print_attr_info(&(term->c_oflag), arrandsize(LOOKUP_OFLAGS), all); printf("\n");
+	print_attr_info(&(term->c_lflag), arrandsize(LOOKUP_LFLAGS), all); printf("\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -181,10 +205,39 @@ int main(int argc, char *argv[]) {
 		// several functions that mutate it...
 		
 		for (int i = 1; i < argc; i++) {
+			const char *name = argv[i];
 			
+			const struct cc_info* cc_found = find_cc_by_name(name, arrandsize(LOOKUP_CONTROL_CHARS));
+			if (cc_found != NULL) {
+				// i++;
+				// and then parse the control character
+				// which is either ^c or c on its own
+				continue;
+			}
+			
+			bool set_bit_to = true;
+			if (name[0] == '-') {
+				set_bit_to = false;
+				name = &name[1];
+			}
+			
+			const struct attr_info* found;
+			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_IFLAGS))) != NULL) {
+				setbit(term.c_iflag, found->index, set_bit_to);
+				continue;
+			}
+			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_OFLAGS))) != NULL) {
+				setbit(term.c_oflag, found->index, set_bit_to);
+				continue;
+			}
+			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_LFLAGS))) != NULL) {
+				setbit(term.c_lflag, found->index, set_bit_to);
+				continue;
+			}
+			
+			fprintf(stderr, "unknown mode (%s)", argv[i]);
+			exit(EXIT_FAILURE);
 		}
-		
-		term.c_lflag ^= ECHO;
 		
 		// ...and write the resulting struct back into the terminal!
 		tcsetattr(STDIN_FILENO, TCSADRAIN, &term);
@@ -205,21 +258,4 @@ werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
 opost -olcuc -ocrnl onlcr -onocr -onlret -ofill -ofdel nl0 cr0 tab0 bs0 vt0 ff0
 isig icanon iexten echo echoe echok -echonl -noflsh -xcase -tostop -echoprt
 echoctl echoke -flusho -extproc
-*/
-
-/* example termios struct
-terminalInfo = {
-	c_iflag = 0x2d02, // input modes
-	c_oflag = 0x0005, // output modes
-	c_cflag = 0x04bf, // control modes
-	c_lflag = 0x8a3b, // local modes
-	c_cc = { // special characters
-		0x03, 0x1c, 0x7f, 0x15, 0x04, 0x00, 0x01,
-		0x00, 0x11, 0x13, 0x1a, 0xff, 0x12, 0x0f,
-		0x17, 0x16, 0xff, 0x00 <repeats 15 times>
-	},
-	c_line   = 0x0000,
-	c_ispeed = 0x000f,
-	c_ospeed = 0x000f
-}
 */
