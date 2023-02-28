@@ -9,6 +9,7 @@ clean:
 
 sttyl: sttyl.c
 	$(CC) $(CC_FLAGS) -o sttyl $^
+# -g for debugging with gdb...
 
 run:
 	@valgrind $(VALGRIND_FLAGS) ./sttyl

@@ -30,26 +30,113 @@ char *get_baud_str(speed_t baud) {
 	}
 }
 
-void print_control_char(struct termios* term, char *msg, size_t index) {
-	if (index < NCCS) {
-		cc_t cc = term->c_cc[index];
+struct cc_info {
+	int index;
+	const char *name;
+};
+
+const struct cc_info LISTED_CONTROL_CHARS[] = {
+	{ VINTR,  "intr"  },
+	{ VERASE, "erase" },
+	{ VKILL,  "kill"  },
+	{ VSTART, "start" },
+	{ VSTOP,  "stop"  }
+};
+
+struct attr_info {
+	int index;
+	const char *name;
+	
+	// should this be printed
+	// even when it's disabled?
+	bool important;
+};
+
+const struct attr_info LOOKUP_IFLAGS[] = {
+	// Copy-Paste-Reformat from
+	// termios-c_iflag.h
+	{ IGNBRK,  "ignbrk",  false }, // Ignore break condition.
+	{ BRKINT,  "brkint",  true  }, // Signal interrupt on break.
+	{ IGNPAR,  "ignpar",  false }, // Ignore characters with parity errors.
+	{ PARMRK,  "parmrk",  false }, // Mark parity and framing errors.
+	{ INPCK,   "inpck",   true  }, // Enable input parity check.
+	{ ISTRIP,  "istrip",  false }, // Strip 8th bit off characters.
+	{ INLCR,   "inlcr",   false }, // Map NL to CR on input.
+	{ IGNCR,   "igncr",   false }, // Ignore CR.
+	{ ICRNL,   "icrnl",   true  }, // Map CR to NL on input.
+	{ IUCLC,   "iuclc",   false }, // Map uppercase characters to lowercase on input (not in POSIX).
+	{ IXON,    "ixon",    false }, // Enable start/stop output control.
+	{ IXANY,   "ixany",   true  }, // Enable any character to restart output.
+	{ IXOFF,   "ixoff",   false }, // Enable start/stop input control.
+	{ IMAXBEL, "imaxbel", false }, // Ring bell when input queue is full (not in POSIX).
+	{ IUTF8,   "iutf8",   false }  // Input is UTF8 (not in POSIX).
+};
+const struct attr_info LOOKUP_OFLAGS[] = {
+	// Copy-Paste-Reformat from
+	// termios-c_oflag.h
+	{ OPOST,  "opost",  false }, // Post-process output.
+	{ OLCUC,  "olcuc",  false }, // Map lowercase characters to uppercase on output. (not in POSIX).
+	{ ONLCR,  "onlcr",  false }, // Map NL to CR-NL on output.
+	{ OCRNL,  "ocrnl",  false }, // Map CR to NL on output.
+	{ ONOCR,  "onocr",  false }, // No CR output at column 0.
+	{ ONLRET, "onlret", false }, // NL performs CR function.
+	{ OFILL,  "ofill",  false }, // Use fill characters for delay.
+	{ OFDEL,  "ofdel",  false }  // Fill is DEL.
+};
+const struct attr_info LOOKUP_LFLAGS[] = {
+	// Copy-Paste-Reformat from
+	// termios-c_lflag.h
+	{ ISIG,   "isig"   , false }, // Enable signals.
+	{ ICANON, "icanon" , false }, // Canonical input (erase and kill processing).
+	{ ECHO,   "echo"   , true  }, // Enable echo.
+	{ ECHOE,  "echoe"  , true  }, // Echo erase character as error-correcting backspace.
+	{ ECHOK,  "echok"  , false }, // Echo KILL.
+	{ ECHONL, "echonl" , false }, // Echo NL.
+	{ NOFLSH, "noflsh" , false }, // Disable flush after interrupt or quit.
+	{ TOSTOP, "tostop" , false }, // Send SIGTTOU for background output.
+	{ IEXTEN, "iexten" , false }  // Enable implementation-defined input processing.
+};
+
+void print_control_char(const struct termios* term, const struct cc_info* info) {
+	if (info->index < NCCS) {
+		cc_t cc = term->c_cc[info->index];
 		if (cc == _POSIX_VDISABLE) {
-			printf("%s = <undef>", msg);
+			printf("%s = <undef>", info->name);
 		} else {
 			// Make printable if alphabetical.
 			char printable_cc = cc < 26
 				? cc + 'A' - 1
 				: '?'; //cc & 077;
 			
-			printf("%s = ^%c", msg, printable_cc);
+			printf("%s = ^%c", info->name, printable_cc);
 			// printf(" (%d; %d)", cc, printable_cc);
 		}
 	} else {
-		printf("invalid (%ld)", index);
+		printf("invalid (%d)", info->index);
 	}
 }
 
-void print_terminal_info(struct termios* term) {
+void print_attribute_info(
+	const tcflag_t* bitset,
+	const struct attr_info lookup[],
+	size_t lookup_len,
+	bool all
+) {
+	bool printedOne = false;
+	for (size_t i = 0; i < lookup_len; i++) {
+		const struct attr_info* info = &lookup[i];
+		bool enabled = (*bitset) & info->index;
+		bool shouldDisplay = enabled || all || info->important;
+		if (shouldDisplay) {
+			if (printedOne) putchar(' ');
+			if (!enabled) putchar('-');
+			printf("%s", info->name);
+			printedOne = true;
+		}
+	}
+}
+
+void print_terminal_info(const struct termios* term) {
 	// Show terminal baud speed.
 	
 	speed_t baud = cfgetospeed(term);
@@ -63,26 +150,20 @@ void print_terminal_info(struct termios* term) {
 	
 	// Show current control character assignments.
 	
-	struct {
-		size_t index;
-		char *name;
-	} listedCharacters[] = {
-		{ VINTR,  "intr"  },
-		{ VERASE, "erase" },
-		{ VKILL,  "kill"  },
-		{ VSTART, "start" },
-		{ VSTOP,  "stop"  },
-	};
-	
-	for (size_t i = 0; i < sizeofarr(listedCharacters); i++) {
+	for (size_t i = 0; i < sizeofarr(LISTED_CONTROL_CHARS); i++) {
 		if (i > 0) printf("; ");
-		
-		print_control_char(
-			term,
-			listedCharacters[i].name,
-			listedCharacters[i].index
-		);
+		print_control_char(term, &LISTED_CONTROL_CHARS[i]);
 	}
+	printf("\n");
+	
+	// Show important flags
+	
+	bool all = false;
+	print_attribute_info(&(term->c_iflag), LOOKUP_IFLAGS, sizeofarr(LOOKUP_IFLAGS), all);
+	printf("\n");
+	print_attribute_info(&(term->c_oflag), LOOKUP_OFLAGS, sizeofarr(LOOKUP_OFLAGS), all);
+	printf("\n");
+	print_attribute_info(&(term->c_lflag), LOOKUP_LFLAGS, sizeofarr(LOOKUP_LFLAGS), all);
 	printf("\n");
 }
 
@@ -99,6 +180,10 @@ int main(int argc, char *argv[]) {
 		// Pass the terminal info struct into
 		// several functions that mutate it...
 		
+		for (int i = 1; i < argc; i++) {
+			
+		}
+		
 		term.c_lflag ^= ECHO;
 		
 		// ...and write the resulting struct back into the terminal!
@@ -108,7 +193,7 @@ int main(int argc, char *argv[]) {
 	return EXIT_SUCCESS;
 }
 
-/*
+/* example stty output
 $ stty -a
 speed 38400 baud; rows 24; columns 80; line = 0;
 intr = ^C; quit = ^\; erase = ^?; kill = ^U; eof = ^D; eol = <undef>;
@@ -122,7 +207,7 @@ isig icanon iexten echo echoe echok -echonl -noflsh -xcase -tostop -echoprt
 echoctl echoke -flusho -extproc
 */
 
-/*
+/* example termios struct
 terminalInfo = {
 	c_iflag = 0x2d02, // input modes
 	c_oflag = 0x0005, // output modes
