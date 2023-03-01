@@ -43,7 +43,8 @@ const struct cc_info LOOKUP_CONTROL_CHARS[] = {
 	{ VERASE, "erase" },
 	{ VKILL,  "kill"  },
 	{ VSTART, "start" },
-	{ VSTOP,  "stop"  }
+	{ VSTOP,  "stop"  },
+	{ VSUSP,  "susp"  }
 };
 
 struct attr_info {
@@ -99,6 +100,18 @@ const struct attr_info LOOKUP_LFLAGS[] = {
 	{ IEXTEN, "iexten" , false }  // Enable implementation-defined input processing.
 };
 
+char display_cc(cc_t cc) {
+	// bleh https://en.wikipedia.org/wiki/Caret_notation
+	return cc ^ 0x40;
+}
+
+cc_t parse_cc(const char* v) {
+	size_t l = strlen(v);
+	if (l == 0 || l > 2) return _POSIX_VDISABLE;
+	if (l == 2 && v[0] == '^') v = &v[1];
+	return (*v) ^ 0x40;
+}
+
 void print_control_char(
 	const struct termios* term,
 	const struct cc_info* info
@@ -109,10 +122,7 @@ void print_control_char(
 			printf("%s = <undef>", info->name);
 		} else {
 			// Make printable if alphabetical.
-			char printable_cc = cc < 26
-				? cc + 'A' - 1
-				: '?'; //cc & 077;
-			
+			char printable_cc = display_cc(cc);
 			printf("%s = ^%c", info->name, printable_cc);
 			// printf(" (%d; %d)", cc, printable_cc);
 		}
@@ -169,11 +179,10 @@ void print_terminal_info(const struct termios* term) {
 	speed_t baud = cfgetospeed(term);
 	char *baud_str = get_baud_str(baud);
 	if (baud_str != NULL) {
-		printf("speed %s baud", baud_str);
+		printf("speed %s baud\n", baud_str);
 	} else {
-		fprintf(stderr, "unknown speed (%d)", baud);
+		fprintf(stderr, "unknown speed (%d)\n", baud);
 	}
-	printf("\n");
 	
 	// Show current control character assignments.
 	
@@ -189,6 +198,42 @@ void print_terminal_info(const struct termios* term) {
 	print_attr_info(&(term->c_iflag), arrandsize(LOOKUP_IFLAGS), all); printf("\n");
 	print_attr_info(&(term->c_oflag), arrandsize(LOOKUP_OFLAGS), all); printf("\n");
 	print_attr_info(&(term->c_lflag), arrandsize(LOOKUP_LFLAGS), all); printf("\n");
+}
+
+enum bit_action { BIT_OFF = 0, BIT_ON = 1, BIT_INVERT = 2 };
+
+bool set_terminal_attr_by_name(struct termios* term, const char *name) {
+	enum bit_action action = BIT_ON;
+	if (name[0] == '-') {
+		action = BIT_OFF;
+		name = &name[1];
+	} else if (name[0] == '~') {
+		action = BIT_INVERT;
+		name = &name[1];
+	}
+	
+	const struct attr_info* attr = NULL;
+	tcflag_t* flag_set = NULL;
+	
+	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_IFLAGS))) != NULL) {
+		flag_set = &(term->c_iflag);
+	} else
+	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_OFLAGS))) != NULL) {
+		flag_set = &(term->c_oflag);
+	} else
+	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_LFLAGS))) != NULL) {
+		flag_set = &(term->c_lflag);
+	} else {
+		return false;
+	}
+	
+	switch (action) {
+		case BIT_OFF:    *flag_set &= ~(attr->index); break;
+		case BIT_ON:     *flag_set |= attr->index; break;
+		case BIT_INVERT: *flag_set ^= attr->index; break;
+		default: return false;
+	}	
+	return true;
 }
 
 int main(int argc, char *argv[]) {
@@ -209,34 +254,26 @@ int main(int argc, char *argv[]) {
 			
 			const struct cc_info* cc_found = find_cc_by_name(name, arrandsize(LOOKUP_CONTROL_CHARS));
 			if (cc_found != NULL) {
-				// i++;
+				// Skip to and look at next argument.
+				i++;
+				
+				if (i >= argc) {
+					fprintf(stderr, "incomplete cc assignment (%s)\n", name);
+					exit(EXIT_FAILURE);
+				}
+				
+				const char *value = argv[i];
+				
 				// and then parse the control character
 				// which is either ^c or c on its own
+				cc_t cc = parse_cc(value);
+				term.c_cc[cc_found->index] = cc;
+				
 				continue;
+			} else if (!set_terminal_attr_by_name(&term, name)) {
+				fprintf(stderr, "unknown mode (%s)\n", name);
+				exit(EXIT_FAILURE);
 			}
-			
-			bool set_bit_to = true;
-			if (name[0] == '-') {
-				set_bit_to = false;
-				name = &name[1];
-			}
-			
-			const struct attr_info* found;
-			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_IFLAGS))) != NULL) {
-				setbit(term.c_iflag, found->index, set_bit_to);
-				continue;
-			}
-			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_OFLAGS))) != NULL) {
-				setbit(term.c_oflag, found->index, set_bit_to);
-				continue;
-			}
-			if ((found = find_attr_by_name(name, arrandsize(LOOKUP_LFLAGS))) != NULL) {
-				setbit(term.c_lflag, found->index, set_bit_to);
-				continue;
-			}
-			
-			fprintf(stderr, "unknown mode (%s)", argv[i]);
-			exit(EXIT_FAILURE);
 		}
 		
 		// ...and write the resulting struct back into the terminal!
@@ -245,17 +282,3 @@ int main(int argc, char *argv[]) {
 	
 	return EXIT_SUCCESS;
 }
-
-/* example stty output
-$ stty -a
-speed 38400 baud; rows 24; columns 80; line = 0;
-intr = ^C; quit = ^\; erase = ^?; kill = ^U; eof = ^D; eol = <undef>;
-eol2 = <undef>; swtch = <undef>; start = ^Q; stop = ^S; susp = ^Z; rprnt = ^R;
-werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
--parenb -parodd -cmspar cs8 -hupcl -cstopb cread -clocal -crtscts
--ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr icrnl ixon -ixoff
--iuclc -ixany -imaxbel iutf8
-opost -olcuc -ocrnl onlcr -onocr -onlret -ofill -ofdel nl0 cr0 tab0 bs0 vt0 ff0
-isig icanon iexten echo echoe echok -echonl -noflsh -xcase -tostop -echoprt
-echoctl echoke -flusho -extproc
-*/
