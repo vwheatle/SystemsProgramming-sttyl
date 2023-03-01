@@ -12,7 +12,7 @@
 	tcflag_t* flag_set = NULL;
 	
 	for (size_t i = 0; i < sizeofarr(lookup_tables); i++) {
-		if ((attr = find_attr_by_name(
+		if ((attr = find_attr_info(
 			name,
 			lookup_tables[i].table,
 			lookup_tables[i].length

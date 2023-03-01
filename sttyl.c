@@ -17,8 +17,7 @@
 #define sizeofarr(arr) (sizeof(arr) / sizeof(*(arr)))
 #define arrandsize(arr) arr, sizeofarr(arr)
 
-// actually i don't like this macro
-#define setbit(i, mask, value) do { i = ((i) & ~(mask)) | ((mask) * (value)); } while (0)
+enum bit_action { BIT_OFF = 0, BIT_ON = 1, BIT_INVERT = 2 };
 
 char *get_baud_str(speed_t baud) {
 	switch (baud) {
@@ -100,11 +99,13 @@ const struct attr_info LOOKUP_LFLAGS[] = {
 	{ IEXTEN, "iexten" , false }  // Enable implementation-defined input processing.
 };
 
+// Convert a control character into one that can be displayed.
 char display_cc(cc_t cc) {
 	// bleh https://en.wikipedia.org/wiki/Caret_notation
 	return cc ^ 0x40;
 }
 
+// Parse a string like "^C" into a control character.
 cc_t parse_cc(const char* v) {
 	size_t l = strlen(v);
 	if (l == 0 || l > 2) return _POSIX_VDISABLE;
@@ -112,16 +113,19 @@ cc_t parse_cc(const char* v) {
 	return (*v) ^ 0x40;
 }
 
+// Print what key the specified control character
+// is bound to, in the specified terminal.
 void print_control_char(
 	const struct termios* term,
 	const struct cc_info* info
 ) {
+	// only print control character if in valid range
+	// as specified by the termios headers
 	if (info->index < NCCS) {
 		cc_t cc = term->c_cc[info->index];
 		if (cc == _POSIX_VDISABLE) {
 			printf("%s = <undef>", info->name);
 		} else {
-			// Make printable if alphabetical.
 			char printable_cc = display_cc(cc);
 			printf("%s = ^%c", info->name, printable_cc);
 			// printf(" (%d; %d)", cc, printable_cc);
@@ -131,8 +135,10 @@ void print_control_char(
 	}
 }
 
+// Print the current status of all attributes in the bitset,
+// looking at the attr_info table for attribute names.
 void print_attr_info(
-	const tcflag_t* bitset,
+	tcflag_t bitset,
 	const struct attr_info lookup[],
 	size_t lookup_len,
 	bool all
@@ -140,18 +146,27 @@ void print_attr_info(
 	bool printed_one = false;
 	for (size_t i = 0; i < lookup_len; i++) {
 		const struct attr_info* info = &lookup[i];
-		bool enabled = (*bitset) & info->index;
+		
+		bool enabled = bitset & info->index;
 		bool should_display = enabled || all || info->important;
+		
 		if (should_display) {
+			// if we've already printed one attribute before,
+			// print a separating space for readability.
 			if (printed_one) putchar(' ');
+			
 			if (!enabled) putchar('-');
 			printf("%s", info->name);
+			
+			// (and set the aforementioned "already printed once" flag)
 			printed_one = true;
 		}
 	}
 }
 
-const struct attr_info* find_attr_by_name(
+// Find first instance of "name" in the provided lookup table.
+// Otherwise, returns NULL.
+const struct attr_info* find_attr_info(
 	const char* name,
 	const struct attr_info lookup[],
 	size_t lookup_len
@@ -162,7 +177,10 @@ const struct attr_info* find_attr_by_name(
 	return NULL;
 }
 
-const struct cc_info* find_cc_by_name(
+// Find first instance of "name" in the provided lookup table.
+// Otherwise, returns NULL.
+// Again. (Beginning to miss generics a bit.)
+const struct cc_info* find_cc_info(
 	const char* name,
 	const struct cc_info lookup[],
 	size_t lookup_len
@@ -192,17 +210,21 @@ void print_terminal_info(const struct termios* term) {
 	}
 	printf("\n");
 	
-	// Show important flags
+	// Show important attributes
 	
+	// (the `all` flag is unused, but if you want to see *every* flag
+	//  in the lookup tables, you can set it to true here. otherwise,
+	//  attributes without the "important" flag set will only be
+	//  visible when they are set.)
 	bool all = false;
-	print_attr_info(&(term->c_iflag), arrandsize(LOOKUP_IFLAGS), all); printf("\n");
-	print_attr_info(&(term->c_oflag), arrandsize(LOOKUP_OFLAGS), all); printf("\n");
-	print_attr_info(&(term->c_lflag), arrandsize(LOOKUP_LFLAGS), all); printf("\n");
+	print_attr_info(term->c_iflag, arrandsize(LOOKUP_IFLAGS), all); printf("\n");
+	print_attr_info(term->c_oflag, arrandsize(LOOKUP_OFLAGS), all); printf("\n");
+	print_attr_info(term->c_lflag, arrandsize(LOOKUP_LFLAGS), all); printf("\n");
 }
 
-enum bit_action { BIT_OFF = 0, BIT_ON = 1, BIT_INVERT = 2 };
-
 bool set_terminal_attr_by_name(struct termios* term, const char *name) {
+	// Parse leading -. For fun, I've also added support
+	// for a leading ~ to easily toggle attributes.
 	enum bit_action action = BIT_ON;
 	if (name[0] == '-') {
 		action = BIT_OFF;
@@ -214,18 +236,18 @@ bool set_terminal_attr_by_name(struct termios* term, const char *name) {
 	
 	const struct attr_info* attr = NULL;
 	tcflag_t* flag_set = NULL;
+	// (this is so indirect out of convenience: now i don't have to copy
+	//  and paste the `switch (action)` block under each successful path)
 	
-	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_IFLAGS))) != NULL) {
+	// Find attribute info in one of the three lookup tables.
+	if      ((attr = find_attr_info(name, arrandsize(LOOKUP_IFLAGS))) != NULL)
 		flag_set = &(term->c_iflag);
-	} else
-	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_OFLAGS))) != NULL) {
+	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_OFLAGS))) != NULL)
 		flag_set = &(term->c_oflag);
-	} else
-	if ((attr = find_attr_by_name(name, arrandsize(LOOKUP_LFLAGS))) != NULL) {
+	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_LFLAGS))) != NULL)
 		flag_set = &(term->c_lflag);
-	} else {
+	else
 		return false;
-	}
 	
 	switch (action) {
 		case BIT_OFF:    *flag_set &= ~(attr->index); break;
@@ -252,25 +274,38 @@ int main(int argc, char *argv[]) {
 		for (int i = 1; i < argc; i++) {
 			const char *name = argv[i];
 			
-			const struct cc_info* cc_found = find_cc_by_name(name, arrandsize(LOOKUP_CONTROL_CHARS));
+			// See if it's a control character name...
+			
+			const struct cc_info* cc_found =
+				find_cc_info(name, arrandsize(LOOKUP_CONTROL_CHARS));
 			if (cc_found != NULL) {
-				// Skip to and look at next argument.
+				// If so, skip to and look at the next argument.
 				i++;
 				
+				// Make sure to bounds-check!
 				if (i >= argc) {
 					fprintf(stderr, "incomplete cc assignment (%s)\n", name);
 					exit(EXIT_FAILURE);
 				}
 				
+				// I expect this to be either one or two characters in length,
+				// and if it's two characters, the first must be a ^.
 				const char *value = argv[i];
 				
-				// and then parse the control character
-				// which is either ^c or c on its own
 				cc_t cc = parse_cc(value);
 				term.c_cc[cc_found->index] = cc;
 				
+				// Since it was successfully found to be a control character
+				// and since it's been assigned,  uhhh that's it
 				continue;
-			} else if (!set_terminal_attr_by_name(&term, name)) {
+			}
+			
+			// Sorry, this unassuming single function call does so much!!!
+			// It even parses out the first character to decide if it enables
+			// or disables attributes. It's okay.
+			bool attr_found = set_terminal_attr_by_name(&term, name);
+			
+			if (!attr_found) {
 				fprintf(stderr, "unknown mode (%s)\n", name);
 				exit(EXIT_FAILURE);
 			}
