@@ -54,6 +54,16 @@ struct attr_info {
 	// even when it's disabled?
 	bool important;
 };
+const struct attr_info LOOKUP_CFLAGS[] = {
+	// Copy-Paste-Reformat from
+	// termios-c_cflag.h
+	{ CSTOPB, "cstopb", false }, // Send two stop bits, else one.
+	{ CREAD,  "cread",  false }, // Enable receiver.
+	{ PARENB, "parenb", false }, // Parity enable.
+	{ PARODD, "parodd", true  }, // if negative, even parity
+	{ HUPCL,  "hupcl",  false }, // Hang up on last close.
+	{ CLOCAL, "clocal", false }  // Ignore modem status lines.
+};
 const struct attr_info LOOKUP_IFLAGS[] = {
 	// Copy-Paste-Reformat from
 	// termios-c_iflag.h
@@ -78,7 +88,7 @@ const struct attr_info LOOKUP_OFLAGS[] = {
 	// termios-c_oflag.h
 	{ OPOST,  "opost",  false }, // Post-process output.
 	{ OLCUC,  "olcuc",  false }, // Map lowercase characters to uppercase on output. (not in POSIX).
-	{ ONLCR,  "onlcr",  false }, // Map NL to CR-NL on output.
+	{ ONLCR,  "onlcr",  true  }, // Map NL to CR-NL on output.
 	{ OCRNL,  "ocrnl",  false }, // Map CR to NL on output.
 	{ ONOCR,  "onocr",  false }, // No CR output at column 0.
 	{ ONLRET, "onlret", false }, // NL performs CR function.
@@ -92,11 +102,11 @@ const struct attr_info LOOKUP_LFLAGS[] = {
 	{ ICANON, "icanon" , false }, // Canonical input (erase and kill processing).
 	{ ECHO,   "echo"   , true  }, // Enable echo.
 	{ ECHOE,  "echoe"  , true  }, // Echo erase character as error-correcting backspace.
-	{ ECHOK,  "echok"  , false }, // Echo KILL.
+	{ ECHOK,  "echok"  , true  }, // Echo KILL.
 	{ ECHONL, "echonl" , false }, // Echo NL.
 	{ NOFLSH, "noflsh" , false }, // Disable flush after interrupt or quit.
 	{ TOSTOP, "tostop" , false }, // Send SIGTTOU for background output.
-	{ IEXTEN, "iexten" , false }  // Enable implementation-defined input processing.
+	{ IEXTEN, "iexten" , true  }  // Enable implementation-defined input processing.
 };
 
 // Convert a control character into one that can be displayed.
@@ -192,15 +202,24 @@ const struct cc_info* find_cc_info(
 }
 
 void print_terminal_info(const struct termios* term) {
+	// (the `all` flag is unused, but if you want to see *every* flag
+	//  in the lookup tables, you can set it to true here. otherwise,
+	//  attributes without the "important" flag set will only be
+	//  visible when they are set.)
+	bool all = false;
+	
 	// Show terminal baud speed.
 	
 	speed_t baud = cfgetospeed(term);
 	char *baud_str = get_baud_str(baud);
 	if (baud_str != NULL) {
-		printf("speed %s baud\n", baud_str);
+		printf("speed %s baud; ", baud_str);
 	} else {
 		fprintf(stderr, "unknown speed (%d)\n", baud);
 	}
+	
+	// Show a few important attributes for now.
+	print_attr_info(term->c_cflag, arrandsize(LOOKUP_CFLAGS), all); printf("\n");
 	
 	// Show current control character assignments.
 	
@@ -210,13 +229,7 @@ void print_terminal_info(const struct termios* term) {
 	}
 	printf("\n");
 	
-	// Show important attributes
-	
-	// (the `all` flag is unused, but if you want to see *every* flag
-	//  in the lookup tables, you can set it to true here. otherwise,
-	//  attributes without the "important" flag set will only be
-	//  visible when they are set.)
-	bool all = false;
+	// Show the rest of the important attributes.
 	print_attr_info(term->c_iflag, arrandsize(LOOKUP_IFLAGS), all); printf("\n");
 	print_attr_info(term->c_oflag, arrandsize(LOOKUP_OFLAGS), all); printf("\n");
 	print_attr_info(term->c_lflag, arrandsize(LOOKUP_LFLAGS), all); printf("\n");
@@ -244,6 +257,8 @@ bool set_terminal_attr_by_name(struct termios* term, const char *name) {
 		flag_set = &(term->c_iflag);
 	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_OFLAGS))) != NULL)
 		flag_set = &(term->c_oflag);
+	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_CFLAGS))) != NULL)
+		flag_set = &(term->c_cflag);
 	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_LFLAGS))) != NULL)
 		flag_set = &(term->c_lflag);
 	else
