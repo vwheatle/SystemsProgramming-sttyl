@@ -287,7 +287,7 @@ bool set_terminal_attr_by_name(struct termios* term, const char *name) {
 	// (this is so indirect out of convenience: now i don't have to copy
 	//  and paste the `switch (action)` block under each successful path)
 	
-	// Find attribute info in one of the three lookup tables.
+	// Find attribute info in one of the four lookup tables.
 	if      ((attr = find_attr_info(name, arrandsize(LOOKUP_IFLAGS))) != NULL)
 		flag_set = &(term->c_iflag);
 	else if ((attr = find_attr_info(name, arrandsize(LOOKUP_OFLAGS))) != NULL)
