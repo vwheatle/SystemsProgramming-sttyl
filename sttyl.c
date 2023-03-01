@@ -50,8 +50,8 @@ struct attr_info {
 	int index;
 	const char *name;
 	
-	// should this be printed
-	// even when it's disabled?
+	// flag: should this attribute be
+	// displayed even when it's disabled?
 	bool important;
 };
 const struct attr_info LOOKUP_CFLAGS[] = {
@@ -94,6 +94,11 @@ const struct attr_info LOOKUP_OFLAGS[] = {
 	{ ONLRET, "onlret", false }, // NL performs CR function.
 	{ OFILL,  "ofill",  false }, // Use fill characters for delay.
 	{ OFDEL,  "ofdel",  false }  // Fill is DEL.
+	// { TABDLY, "notabs", true  }  // Horizontal-tab delays.
+	// I don't know any good way of doing this
+	// without doing weird dang special cases :(
+	// Plus, TABDLY, TAB0, and TAB3 aren't even defined over here.
+	// And I'm running Linux Linux! (openSUSE Tumbleweed...)
 };
 const struct attr_info LOOKUP_LFLAGS[] = {
 	// Copy-Paste-Reformat from
